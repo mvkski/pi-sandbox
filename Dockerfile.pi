@@ -1,0 +1,13 @@
+# pi coding agent sandbox — matches host setup (Node 22, pi 0.84.2)
+FROM node:22-bookworm-slim
+
+# System tools used by pi's built-in tools
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install pi globally (pinned to the version running on this machine)
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.84.2
+
+WORKDIR /workspace
+ENTRYPOINT ["pi"]
