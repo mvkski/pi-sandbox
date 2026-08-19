@@ -187,6 +187,24 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker build -t "$IMAGE" -f "$DOCKERFILE" "$HERE"
 fi
 
+# --- optional GitHub credentials ---------------------------------------
+# Mount host credentials so pi inside the container can clone/push:
+#   ~/.git-credentials  -> /root/.git-credentials, with git told to use the
+#                          "store" helper via GIT_CONFIG_* (the host
+#                          ~/.gitconfig is not mounted)
+#   ~/.ssh              -> /root/.ssh (for git@github.com: remotes)
+#   GITHUB_TOKEN/GH_TOKEN env vars, if exported in your shell
+CRED_ARGS=()
+if [ -f "$HOME/.git-credentials" ]; then
+  CRED_ARGS+=( -v "$HOME/.git-credentials:/root/.git-credentials"
+               -e GIT_CONFIG_COUNT=1 \
+               -e GIT_CONFIG_KEY_0=credential.helper \
+               -e GIT_CONFIG_VALUE_0=store )
+fi
+[ -d "$HOME/.ssh" ] && CRED_ARGS+=( -v "$HOME/.ssh:/root/.ssh" )
+[ -n "${GITHUB_TOKEN:-}" ] && CRED_ARGS+=( -e GITHUB_TOKEN )
+[ -n "${GH_TOKEN:-}" ] && CRED_ARGS+=( -e GH_TOKEN )
+
 # --- run ----------------------------------------------------------------
 # -t only makes sense with a TTY (interactive chat). Drop it when piped.
 TTY_FLAG="-i"
@@ -198,4 +216,5 @@ exec docker run --rm \
   -v "$HOME/.pi/agent:/root/.pi/agent" \
   -v "$DIR:$DIR" \
   -w "$DIR" \
+  "${CRED_ARGS[@]}" \
   "$IMAGE" "$@"

@@ -77,6 +77,21 @@ JSONL files (header for `id`/`cwd`, last `session_info` entry for the
 display name) — no daemons, no extra state. `PI_SESSIONS_DIR` overrides the
 store location.
 
+## GitHub credentials
+
+If the following exist on the host, they are mounted into the container so pi
+inside can clone/push (each is passed through only when present):
+
+| Host source | Container target | Purpose |
+| --- | --- | --- |
+| `~/.git-credentials` | `/root/.git-credentials` | HTTPS pushes via git's `store` helper (enabled through `GIT_CONFIG_*` env vars, since the host `~/.gitconfig` is not mounted) |
+| `~/.ssh` | `/root/.ssh` | `git@github.com:` SSH remotes |
+| `$GITHUB_TOKEN` / `$GH_TOKEN` (if exported) | same env vars | API access, `gh`-style flows |
+
+Prefer scoped access? Export a fine-grained PAT as `GITHUB_TOKEN` in your
+shell instead of relying on `~/.ssh`, or edit the `CRED_ARGS` block in
+`pi-sandbox.sh` to mount a single read-only token file.
+
 ## Notes
 
 - Refuses to run with `DIR=/` (would hide the container filesystem).
