@@ -48,14 +48,21 @@ if [ "${1:-}" = "resume" ]; then
     exit 1
   fi
 
-  # Emit one TSV row per session: mtime_ms, id, cwd, name
-  # (name = latest session_info entry; empty if the session is unnamed)
+  # Emit one unit-separator (\x1f) delimited row per session:
+  # mtime_ms, id, cwd, name, first-user-msg, msg-count
+  # (name = latest session_info entry; first-user-msg = fallback preview)
   scan_sessions() {
     node -e '
 const fs = require("fs"), path = require("path");
 const root = process.argv[1];
 let dirs = [];
 try { dirs = fs.readdirSync(root, { withFileTypes: true }); } catch {}
+const textOf = (m) => {
+  const c = m && m.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) return c.filter((b) => b && b.type === "text" && b.text).map((b) => b.text).join(" ");
+  return "";
+};
 const rows = [];
 for (const d of dirs) {
   if (!d.isDirectory()) continue;
@@ -72,17 +79,24 @@ for (const d of dirs) {
       let hdr = null;
       try { hdr = JSON.parse(nl === -1 ? data : data.slice(0, nl)); } catch {}
       if (!hdr || hdr.type !== "session" || !hdr.id) continue;
-      let name = "";
-      const lines = data.split("\n");
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const l = lines[i];
+      let name = "", first = "", msgCount = 0;
+      for (const l of data.split("\n")) {
         if (!l) continue;
         let e = null;
         try { e = JSON.parse(l); } catch { continue; }
-        if (e.type === "session_info") { name = (e.name || "").trim(); break; }
+        if (e.type === "session_info") name = (e.name || "").trim();
+        else if (e.type === "message") {
+          msgCount++;
+          if (e.message && e.message.role === "user" && !first) {
+            const t = textOf(e.message);
+            if (t) first = t;
+          }
+        }
       }
-      const clean = (s) => String(s || "").replace(/\t/g, " ");
-      rows.push([Math.floor(st.mtimeMs), hdr.id, clean(hdr.cwd || "?"), clean(name)].join("\t"));
+      const clean = (s) => String(s || "").replace(/[\t\r\n\u001f]+/g, " ").replace(/\s+/g, " ").trim();
+      // \u001f (unit separator): a non-whitespace IFS char, so bash `read`
+      // keeps empty fields intact (a literal tab would collapse them)
+      rows.push([Math.floor(st.mtimeMs), hdr.id, clean(hdr.cwd || "?"), clean(name), clean(first).slice(0, 120), String(msgCount)].join("\u001f"));
     } catch {}
   }
 }
@@ -115,12 +129,18 @@ if (rows.length) process.stdout.write(rows.join("\n") + "\n");
   echo "Recent pi sessions (newest first):"
   idx=0
   rows=()
-  while IFS=$'\t' read -r mtime sid cwd name; do
+  while IFS=$'\x1f' read -r mtime sid cwd name first count; do
     [ -n "${sid:-}" ] || continue
     idx=$(( idx + 1 ))
-    rows+=("$sid"$'\t'"$cwd"$'\t'"${name:-}"$'\t'"$mtime")
-    printf "  %2d  %s  %s\n" "$idx" "$(fmt_date "$mtime")" "${cwd:0:44}"
-    [ -n "${name:-}" ] && printf "      %s\n" "name: ${name:0:60}"
+    rows+=("$sid"$'\x1f'"$cwd"$'\x1f'"$mtime")
+    meta="${count:-0} msgs · ${sid:0:8}"
+    if [ -n "${name:-}" ]; then
+      printf "  %2d  %s  %s\n         %s\n" "$idx" "$(fmt_date "$mtime")" "${cwd:0:44}" "${name:0:60}  ($meta)"
+    elif [ -n "${first:-}" ]; then
+      printf "  %2d  %s  %s\n         \"%s\"  (%s)\n" "$idx" "$(fmt_date "$mtime")" "${cwd:0:44}" "${first:0:60}" "$meta"
+    else
+      printf "  %2d  %s  %s\n         (%s)\n" "$idx" "$(fmt_date "$mtime")" "${cwd:0:44}" "$meta"
+    fi
   done <<< "$list"
   if [ "$capped" -eq 1 ]; then
     echo "(showing 40 most recent — narrow with: spi resume <filter>)"
@@ -146,7 +166,7 @@ if (rows.length) process.stdout.write(rows.join("\n") + "\n");
     exit 1
   fi
 
-  IFS=$'\t' read -r sid cwd name mtime <<< "${rows[$(( sel - 1 ))]}"
+  IFS=$'\x1f' read -r sid cwd mtime <<< "${rows[$(( sel - 1 ))]}"
   if [ -d "$cwd" ]; then
     echo "launching: spi $cwd --session $sid"
     exec "$0" "$cwd" --session "$sid"
